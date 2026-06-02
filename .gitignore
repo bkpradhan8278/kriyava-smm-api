@@ -1,0 +1,14 @@
+node_modules
+/dist
+/coverage
+
+# env (keep secrets out of version control)
+.env
+.env.*
+!.env.example
+
+# prisma custom output (using default node_modules location now)
+/generated
+
+# logs
+*.log
