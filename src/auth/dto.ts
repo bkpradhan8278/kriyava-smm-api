@@ -30,3 +30,11 @@ export class UpdateProfileDto {
   @IsString()
   phone?: string;
 }
+
+export class SocialDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  name!: string;
+}

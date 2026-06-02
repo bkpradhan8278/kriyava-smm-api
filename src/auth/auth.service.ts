@@ -60,4 +60,19 @@ export class AuthService {
     if (!user) throw new UnauthorizedException();
     return this.publicUser(user);
   }
+
+  // Social sign-in (Google via Firebase). The frontend verifies the user with
+  // Firebase, then sends the verified email + name here. We upsert the account
+  // and issue our own JWT. A random password is stored so the row is valid;
+  // social users sign in only through this endpoint.
+  async social(email: string, name: string) {
+    let user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      const hash = await bcrypt.hash(`social_${Math.random().toString(36).slice(2)}`, 10);
+      user = await this.prisma.user.create({
+        data: { email, name: name || 'Creator', password: hash, balance: WELCOME_CREDIT },
+      });
+    }
+    return { token: this.sign(user), user: this.publicUser(user) };
+  }
 }

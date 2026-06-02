@@ -15,3 +15,4 @@ node_modules
 
 # DO app spec (contains secrets)
 .do-app.yaml
+spec_tmp.yaml
