@@ -12,3 +12,6 @@ node_modules
 
 # logs
 *.log
+
+# DO app spec (contains secrets)
+.do-app.yaml
