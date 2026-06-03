@@ -21,7 +21,7 @@ export class AiService {
     if (prompt.length > 1200) throw new BadRequestException('Prompt is too long');
 
     const key = this.config.get<string>('GEMINI_API_KEY');
-    const model = this.config.get<string>('GEMINI_MODEL') || 'gemini-1.5-flash';
+    const model = this.config.get<string>('GEMINI_MODEL') || 'gemini-2.5-flash';
     if (!key) {
       return {
         provider: 'fallback',
