@@ -18,6 +18,9 @@ model User {
   spent     Decimal  @default(0) @db.Decimal(12, 4)
   apiKey    String   @unique @default(cuid())
   role      String   @default("user")
+  referralCode    String?  @unique
+  referredBy      String?
+  referralEarned  Decimal  @default(0) @db.Decimal(12, 4)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -2,6 +2,8 @@ import { Injectable, BadRequestException, ServiceUnavailableException } from '@n
 import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { WalletService } from '../wallet/wallet.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { EmailService } from '../email/email.service';
 
 const MIN_TOPUP = 10;
 
@@ -9,7 +11,11 @@ const MIN_TOPUP = 10;
 export class PaymentsService {
   private rzp: Razorpay | null = null;
 
-  constructor(private wallet: WalletService) {
+  constructor(
+    private wallet: WalletService,
+    private prisma: PrismaService,
+    private email: EmailService,
+  ) {
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
     if (keyId && keySecret) {
@@ -63,6 +69,39 @@ export class PaymentsService {
     if (payment.status !== 'captured' && payment.status !== 'authorized') {
       throw new BadRequestException('Payment not completed');
     }
-    return this.wallet.credit(userId, amount, 'Razorpay', razorpayPaymentId);
+    const result = await this.wallet.credit(userId, amount, 'Razorpay', razorpayPaymentId);
+
+    // Fire-and-forget: send email + handle referral cashback
+    void this.postPayment(userId, amount, result.balance);
+
+    return result;
+  }
+
+  private async postPayment(userId: string, amount: number, newBalance: number) {
+    try {
+      const user = await this.prisma.user.findUnique({ where: { id: userId } });
+      if (!user) return;
+
+      // Send fund-added email
+      void this.email.sendFundAdded(user.email, user.name, amount, newBalance);
+
+      // Referral cashback: 5% to referrer
+      if (user.referredBy) {
+        const cashback = +(amount * 0.05).toFixed(4);
+        if (cashback < 0.01) return;
+        const referrer = await this.prisma.user.findUnique({ where: { id: user.referredBy } });
+        if (!referrer) return;
+
+        await this.prisma.$transaction([
+          this.prisma.user.update({ where: { id: referrer.id }, data: { balance: { increment: cashback }, referralEarned: { increment: cashback } } }),
+          this.prisma.transaction.create({ data: { userId: referrer.id, type: 'Referral', amount: cashback, method: 'Referral', note: `5% cashback from ${user.name}` } }),
+        ]);
+
+        const updatedReferrer = await this.prisma.user.findUnique({ where: { id: referrer.id } });
+        void this.email.sendReferralEarned(referrer.email, referrer.name, cashback, Number(updatedReferrer?.referralEarned ?? cashback));
+      }
+    } catch {
+      /* never let cashback errors surface */
+    }
   }
 }

@@ -10,8 +10,8 @@ export class AuthController {
   constructor(private auth: AuthService) {}
 
   @Post('register')
-  register(@Body() dto: RegisterDto) {
-    return this.auth.register(dto);
+  register(@Body() dto: RegisterDto & { referralCode?: string }) {
+    return this.auth.register(dto, dto.referralCode);
   }
 
   @Post('login')
@@ -20,8 +20,8 @@ export class AuthController {
   }
 
   @Post('social')
-  social(@Body() dto: SocialDto) {
-    return this.auth.social(dto.email, dto.name);
+  social(@Body() dto: SocialDto & { referralCode?: string }) {
+    return this.auth.social(dto.email, dto.name, dto.referralCode);
   }
 
   @UseGuards(JwtAuthGuard)

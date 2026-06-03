@@ -1,12 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ServicesService } from '../services/services.service';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private services: ServicesService,
+    private email: EmailService,
   ) {}
 
   private shape(o: {
@@ -85,6 +87,10 @@ export class OrdersService {
           providerOrderId: fulfillment.providerOrderId,
           providerCurrency: fulfillment.providerCurrency,
         },
+      });
+      // Send order email fire-and-forget
+      void this.prisma.user.findUnique({ where: { id: userId } }).then((u) => {
+        if (u) void this.email.sendOrderPlaced(u.email, u.name, order.id, svc.name, qty, charge, fulfillment.provider);
       });
       return this.shape(routed);
     } catch (err) {

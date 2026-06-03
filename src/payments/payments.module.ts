@@ -4,7 +4,7 @@ import { PaymentsController } from './payments.controller';
 import { WalletModule } from '../wallet/wallet.module';
 
 @Module({
-  imports: [WalletModule],
+  imports: [WalletModule],   // PrismaModule + EmailModule are @Global, no import needed
   providers: [PaymentsService],
   controllers: [PaymentsController],
 })
