@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, NotFoundException, BadRequestException, UseGuards } from '@nestjs/common';
 import { ServicesService } from './services/services.service';
 import { PrismaService } from './prisma/prisma.service';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -99,5 +99,21 @@ export class AppController {
       })),
       todayDeposits: todayDeposits.reduce((s, d) => s + Number(d.amount), 0),
     };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin/add-funds')
+  async adminAddFunds(@Body() body: { email?: string; amount?: number; note?: string }) {
+    if (!body.email) throw new BadRequestException('email required');
+    const amt = Number(body.amount);
+    if (!amt || amt <= 0 || amt > 100000) throw new BadRequestException('Invalid amount (1–100000)');
+    const user = await this.prisma.user.findUnique({ where: { email: body.email } });
+    if (!user) throw new NotFoundException(`User ${body.email} not found`);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: user.id }, data: { balance: { increment: amt } } }),
+      this.prisma.transaction.create({ data: { userId: user.id, type: 'Deposit', amount: amt, method: 'Manual', note: body.note || 'Admin credit' } }),
+    ]);
+    const updated = await this.prisma.user.findUnique({ where: { id: user.id } });
+    return { ok: true, email: body.email, added: amt, newBalance: Number(updated?.balance ?? 0) };
   }
 }
