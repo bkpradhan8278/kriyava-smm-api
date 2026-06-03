@@ -152,6 +152,32 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
     return currency === 'USD' ? rate * usdInr : rate;
   }
 
+  /**
+   * Tiered markup by service type and price:
+   *
+   * Views / Likes / Story / Share / Comments / Reels  → 22% flat (cheap, high-volume)
+   * Followers / Subscribers / Members (tiered by costInr per 1000):
+   *   ≥ ₹100  → 15%   (premium services, smaller margin)
+   *   ≥ ₹70   → 20%
+   *   < ₹70   → 25%   (cheap followers, higher margin)
+   * All other services                                → 20%
+   */
+  private markupPct(name: string, category: string, costInr: number): number {
+    const text = `${name} ${category}`.toLowerCase();
+    // Bulk engagement — very cheap, fixed 22%
+    if (/\b(view|like|story|stories|share|comment|reel|impression|reach|save)\b/.test(text)) {
+      return 22;
+    }
+    // Followers / subscribers / members — tiered
+    if (/\b(follower|subscriber|sub\b|member|fan)\b/.test(text)) {
+      if (costInr >= 100) return 15;
+      if (costInr >= 70)  return 20;
+      return 25;
+    }
+    // Default for everything else (Telegram, YouTube, etc.)
+    return 20;
+  }
+
   private platformFor(text: string) {
     const q = text.toLowerCase();
     if (q.includes('instagram')) return 'Instagram';
@@ -253,14 +279,16 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
       const backups = rows.slice(1, 3).map((r) => r.option);
       const min = Number(primary.service.min || 1);
       const max = Number(primary.service.max || 0);
+      const svcCategory = primary.service.category || primary.service.type || 'General';
+      const markup = this.markupPct(primary.service.name, svcCategory, primary.option.costInr);
       liveServices.push({
         id: `${primary.option.key}:${primary.option.serviceId}`,
         name: primary.service.name,
-        platform: this.platformFor(`${primary.service.category || ''} ${primary.service.name}`),
-        category: primary.service.category || primary.service.type || 'General',
-        country: this.countryFor(`${primary.service.category || ''} ${primary.service.name}`),
-        price: Number((primary.option.costInr * 1.15).toFixed(4)),
-        margin_pct: 15,
+        platform: this.platformFor(`${svcCategory} ${primary.service.name}`),
+        category: svcCategory,
+        country: this.countryFor(`${svcCategory} ${primary.service.name}`),
+        price: Number((primary.option.costInr * (1 + markup / 100)).toFixed(4)),
+        margin_pct: markup,
         speed: this.speedFor(primary.service.name),
         refill: primary.option.refill ? 'Refill available' : 'No refill',
         quality: this.qualityFor(`${primary.service.category || ''} ${primary.service.name}`),
