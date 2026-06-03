@@ -4,7 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto, LoginDto } from './dto';
 
-const WELCOME_CREDIT = 500; // demo wallet credit on signup
+const WELCOME_CREDIT = 0; // no free credit — users add funds via payment
 
 @Injectable()
 export class AuthService {

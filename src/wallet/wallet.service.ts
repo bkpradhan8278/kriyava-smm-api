@@ -10,28 +10,23 @@ export class WalletService {
     return { balance: Number(u?.balance ?? 0), spent: Number(u?.spent ?? 0) };
   }
 
-  async addFunds(userId: string, amount: number) {
-    if (!amount || amount < 50) throw new BadRequestException('Minimum top-up is ₹50');
-    const cashback = amount >= 1000 ? Math.round(amount * 0.05) : 0;
-    const credit = amount + cashback;
-
+  /**
+   * Credit the wallet after a verified payment. Called only by the payments
+   * module once a Razorpay signature is verified — no free credit, no cashback.
+   */
+  async credit(userId: string, amount: number, method: string, note?: string) {
+    if (!amount || amount <= 0) throw new BadRequestException('Invalid amount');
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: userId },
-        data: { balance: { increment: credit } },
+        data: { balance: { increment: amount } },
       });
       await tx.transaction.create({
-        data: { userId, type: 'Deposit', amount, method: 'Razorpay' },
+        data: { userId, type: 'Deposit', amount, method, note },
       });
-      if (cashback > 0) {
-        await tx.transaction.create({
-          data: { userId, type: 'Cashback', amount: cashback, method: 'Bonus', note: '5% deposit cashback' },
-        });
-      }
     });
-
     const u = await this.prisma.user.findUnique({ where: { id: userId } });
-    return { added: amount, cashback, balance: Number(u?.balance ?? 0) };
+    return { added: amount, balance: Number(u?.balance ?? 0) };
   }
 
   async transactions(userId: string) {
