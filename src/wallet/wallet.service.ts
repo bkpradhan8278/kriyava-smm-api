@@ -7,6 +7,16 @@ export class WalletService {
 
   async balance(userId: string) {
     const u = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (Number(u?.balance ?? 0) === 500 && Number(u?.spent ?? 0) === 0) {
+      const [orders, deposits] = await Promise.all([
+        this.prisma.order.count({ where: { userId } }),
+        this.prisma.transaction.count({ where: { userId, type: 'Deposit' } }),
+      ]);
+      if (orders === 0 && deposits === 0) {
+        const clean = await this.prisma.user.update({ where: { id: userId }, data: { balance: 0 } });
+        return { balance: Number(clean.balance), spent: Number(clean.spent) };
+      }
+    }
     return { balance: Number(u?.balance ?? 0), spent: Number(u?.spent ?? 0) };
   }
 

@@ -37,6 +37,33 @@ export class AuthService {
     };
   }
 
+  private async clearLegacyWelcomeCredit<
+    T extends {
+      id: string;
+      email: string;
+      name: string;
+      phone: string | null;
+      balance: unknown;
+      spent: unknown;
+      apiKey: string;
+    },
+  >(user: T) {
+    const balance = Number(user.balance);
+    const spent = Number(user.spent);
+    if (balance !== 500 || spent !== 0) return user;
+
+    const [orders, deposits] = await Promise.all([
+      this.prisma.order.count({ where: { userId: user.id } }),
+      this.prisma.transaction.count({ where: { userId: user.id, type: 'Deposit' } }),
+    ]);
+    if (orders > 0 || deposits > 0) return user;
+
+    return this.prisma.user.update({
+      where: { id: user.id },
+      data: { balance: 0 },
+    });
+  }
+
   async register(dto: RegisterDto) {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already registered');
@@ -52,13 +79,15 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('Invalid email or password');
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) throw new UnauthorizedException('Invalid email or password');
-    return { token: this.sign(user), user: this.publicUser(user) };
+    const cleanUser = await this.clearLegacyWelcomeCredit(user);
+    return { token: this.sign(cleanUser), user: this.publicUser(cleanUser) };
   }
 
   async me(userId: string) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new UnauthorizedException();
-    return this.publicUser(user);
+    const cleanUser = await this.clearLegacyWelcomeCredit(user);
+    return this.publicUser(cleanUser);
   }
 
   // Social sign-in (Google via Firebase). The frontend verifies the user with
@@ -73,6 +102,7 @@ export class AuthService {
         data: { email, name: name || 'Creator', password: hash, balance: WELCOME_CREDIT },
       });
     }
-    return { token: this.sign(user), user: this.publicUser(user) };
+    const cleanUser = await this.clearLegacyWelcomeCredit(user);
+    return { token: this.sign(cleanUser), user: this.publicUser(cleanUser) };
   }
 }
