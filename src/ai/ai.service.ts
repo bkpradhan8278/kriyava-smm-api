@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AiChatBody } from './ai.controller';
 
@@ -13,6 +13,8 @@ interface GeminiResponse {
 
 @Injectable()
 export class AiService {
+  private readonly logger = new Logger(AiService.name);
+
   constructor(private config: ConfigService) {}
 
   async chat(body: AiChatBody) {
@@ -51,6 +53,7 @@ export class AiService {
 
     const data = (await res.json()) as GeminiResponse;
     if (!res.ok) {
+      this.logger.warn(`Gemini request failed: ${res.status} ${data.error?.message || 'unknown error'}`);
       return { provider: 'fallback', reply: this.fallback(prompt, surface) };
     }
     const reply = data.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('').trim();
