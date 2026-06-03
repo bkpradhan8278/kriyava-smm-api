@@ -10,6 +10,7 @@ import { TicketsModule } from './tickets/tickets.module';
 import { PaymentsModule } from './payments/payments.module';
 import { AiModule } from './ai/ai.module';
 import { EmailModule } from './email/email.module';
+import { ReferralsModule } from './referrals/referrals.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { EmailModule } from './email/email.module';
     TicketsModule,
     PaymentsModule,
     AiModule,
+    ReferralsModule,
   ],
   controllers: [AppController],
 })
