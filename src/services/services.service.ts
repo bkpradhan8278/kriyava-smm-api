@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -48,18 +48,29 @@ interface ProviderApiService {
   cancel?: boolean;
 }
 
+const REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
 @Injectable()
-export class ServicesService {
+export class ServicesService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ServicesService.name);
   private services: MarketService[] = [];
   private staticServices: MarketService[] = [];
   private byId = new Map<string, MarketService>();
   private providers: ProviderOption[] = [];
   private providerByServiceId = new Map<string, ProviderOption>();
+  private refreshTimer?: ReturnType<typeof setInterval>;
 
   constructor(private config: ConfigService) {
     this.load();
+  }
+
+  onModuleInit() {
     void this.refreshProviders();
+    this.refreshTimer = setInterval(() => void this.refreshProviders(), REFRESH_INTERVAL_MS);
+  }
+
+  onModuleDestroy() {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
   }
 
   private load() {
@@ -299,6 +310,17 @@ export class ServicesService {
       }
     }
     throw new Error(lastError);
+  }
+
+  async refillOrder(providerKey: string, providerOrderId: string) {
+    const cfg = this.providerConfigs().find((p) => p.key === providerKey);
+    if (!cfg?.apiKey) throw new Error('Provider not configured');
+    const res = await this.providerPost<{ refill?: string | number; error?: string }>(cfg.apiUrl, cfg.apiKey, {
+      action: 'refill',
+      order: providerOrderId,
+    });
+    if (res.error) throw new Error(res.error);
+    return { refillId: res.refill ? String(res.refill) : null };
   }
 
   all() {

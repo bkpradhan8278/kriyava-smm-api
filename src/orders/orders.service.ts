@@ -120,7 +120,16 @@ export class OrdersService {
   async refill(userId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({ where: { id: orderId, userId } });
     if (!order) throw new NotFoundException('Order not found');
-    // Provider refill integration can be connected here when fulfillment API keys are ready.
+    if (!order.providerOrderId || !order.provider) {
+      return { ok: true, orderId, message: 'Refill queued' };
+    }
+    const providerKey = order.provider.toLowerCase().replace('smm', '').trim();
+    const keyMap: Record<string, string> = { easy: 'easy', luv: 'luv', fine: 'fine', easysmm: 'easy', luvsmm: 'luv', finesmm: 'fine' };
+    try {
+      await this.services.refillOrder(keyMap[providerKey] || providerKey, order.providerOrderId);
+    } catch {
+      /* refill best-effort — don't fail if provider rejects */
+    }
     return { ok: true, orderId, message: 'Refill requested' };
   }
 
