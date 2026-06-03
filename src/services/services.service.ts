@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -16,15 +17,49 @@ export interface MarketService {
   min: number | null;
   max: number | null;
   provider: string;
+  providerServiceId?: string;
+  providerCostInr?: number;
+  providerRate?: number;
+  providerCurrency?: string;
+  backupProviders?: ProviderOption[];
+}
+
+export interface ProviderOption {
+  key: string;
+  name: string;
+  apiUrl: string;
+  serviceId: string;
+  rate: number;
+  currency: string;
+  costInr: number;
+  refill: boolean;
+  cancel: boolean;
+}
+
+interface ProviderApiService {
+  service: number | string;
+  name: string;
+  type?: string;
+  category?: string;
+  rate: string;
+  min?: number | string;
+  max?: number | string;
+  refill?: boolean;
+  cancel?: boolean;
 }
 
 @Injectable()
 export class ServicesService {
+  private readonly logger = new Logger(ServicesService.name);
   private services: MarketService[] = [];
+  private staticServices: MarketService[] = [];
   private byId = new Map<string, MarketService>();
+  private providers: ProviderOption[] = [];
+  private providerByServiceId = new Map<string, ProviderOption>();
 
-  constructor() {
+  constructor(private config: ConfigService) {
     this.load();
+    void this.refreshProviders();
   }
 
   private load() {
@@ -39,14 +74,231 @@ export class ServicesService {
       try {
         if (fs.existsSync(p)) {
           const raw = JSON.parse(fs.readFileSync(p, 'utf-8'));
-          this.services = raw.services || [];
+          this.staticServices = raw.services || [];
+          this.services = this.staticServices;
           break;
         }
       } catch {
         /* try next */
       }
     }
+    this.reindex();
+  }
+
+  private reindex() {
+    this.byId.clear();
+    this.providerByServiceId.clear();
     for (const s of this.services) this.byId.set(s.id, s);
+    for (const p of this.providers) this.providerByServiceId.set(`${p.key}:${p.serviceId}`, p);
+  }
+
+  private providerConfigs() {
+    return [
+      {
+        key: 'easy',
+        name: 'EasySMM',
+        apiUrl: 'https://easysmmpanel.com/api/v2',
+        apiKey: this.config.get<string>('EASY_SMM_API_KEY'),
+      },
+      {
+        key: 'luv',
+        name: 'LuvSMM',
+        apiUrl: 'https://luvsmm.com/api/v2',
+        apiKey: this.config.get<string>('LUV_SMM_API_KEY'),
+      },
+      {
+        key: 'fine',
+        name: 'FineSMM',
+        apiUrl: 'https://finesmmpanel.com/api/v2',
+        apiKey: this.config.get<string>('FINE_SMM_API_KEY'),
+      },
+    ].filter((p) => Boolean(p.apiKey));
+  }
+
+  private async providerPost<T>(apiUrl: string, apiKey: string, body: Record<string, string | number>) {
+    const params = new URLSearchParams({ key: apiKey, ...Object.fromEntries(Object.entries(body).map(([k, v]) => [k, String(v)])) });
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params,
+    });
+    const data = (await res.json()) as T;
+    if (!res.ok) throw new Error(`Provider HTTP ${res.status}`);
+    return data;
+  }
+
+  private async providerCurrency(apiUrl: string, apiKey: string) {
+    const data = await this.providerPost<{ currency?: string }>(apiUrl, apiKey, { action: 'balance' });
+    return (data.currency || 'INR').toUpperCase();
+  }
+
+  private costInr(rate: number, currency: string) {
+    const usdInr = Number(this.config.get<string>('USD_INR_RATE') || 84);
+    return currency === 'USD' ? rate * usdInr : rate;
+  }
+
+  private platformFor(text: string) {
+    const q = text.toLowerCase();
+    if (q.includes('instagram')) return 'Instagram';
+    if (q.includes('youtube')) return 'YouTube';
+    if (q.includes('telegram')) return 'Telegram';
+    if (q.includes('tiktok')) return 'TikTok';
+    if (q.includes('facebook')) return 'Facebook';
+    if (q.includes('spotify')) return 'Spotify';
+    if (q.includes('twitter') || q.includes(' x ')) return 'X';
+    if (q.includes('website')) return 'Website';
+    return 'Other';
+  }
+
+  private countryFor(text: string) {
+    const q = text.toLowerCase();
+    if (q.includes('india') || q.includes('indian')) return 'India';
+    if (q.includes('usa') || q.includes('united states')) return 'USA';
+    if (q.includes('worldwide') || q.includes('global')) return 'Global';
+    return 'Global';
+  }
+
+  private qualityFor(text: string) {
+    const q = text.toLowerCase();
+    if (q.includes('hq') || q.includes('high quality') || q.includes('real') || q.includes('non-drop')) return 5;
+    if (q.includes('medium') || q.includes('refill')) return 4;
+    if (q.includes('cheap') || q.includes('bot') || q.includes('drop')) return 2;
+    return 3;
+  }
+
+  private speedFor(text: string) {
+    const q = text.toLowerCase();
+    if (q.includes('instant')) return 'Instant';
+    if (q.includes('super fast') || q.includes('fastest')) return 'Super fast';
+    if (q.includes('fast')) return 'Fast';
+    if (q.includes('slow')) return 'Slow';
+    return 'Provider avg';
+  }
+
+  private matchKey(s: ProviderApiService) {
+    const text = `${s.category || ''} ${s.name}`.toLowerCase();
+    return text
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .replace(/\b(speed|quality|refill|button|available|max|min|day|days|hours|instant|fast|slow|super|provider)\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 140);
+  }
+
+  async refreshProviders() {
+    const configs = this.providerConfigs();
+    if (configs.length === 0) return;
+    const fetched: Array<{ service: ProviderApiService; option: ProviderOption; matchKey: string }> = [];
+    for (const cfg of configs) {
+      try {
+        const currency = await this.providerCurrency(cfg.apiUrl, cfg.apiKey!);
+        const services = await this.providerPost<ProviderApiService[]>(cfg.apiUrl, cfg.apiKey!, { action: 'services' });
+        for (const service of Array.isArray(services) ? services : []) {
+          const rate = Number(service.rate);
+          if (!Number.isFinite(rate) || rate < 0) continue;
+          const serviceId = String(service.service);
+          const costInr = this.costInr(rate, currency);
+          fetched.push({
+            service,
+            matchKey: this.matchKey(service),
+            option: {
+              key: cfg.key,
+              name: cfg.name,
+              apiUrl: cfg.apiUrl,
+              serviceId,
+              rate,
+              currency,
+              costInr,
+              refill: Boolean(service.refill),
+              cancel: Boolean(service.cancel),
+            },
+          });
+        }
+      } catch (err) {
+        this.logger.warn(`${cfg.name} service sync failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+      }
+    }
+
+    if (fetched.length === 0) return;
+    const groups = new Map<string, typeof fetched>();
+    for (const row of fetched) {
+      const key = row.matchKey || `${row.option.key}:${row.option.serviceId}`;
+      const group = groups.get(key) || [];
+      group.push(row);
+      groups.set(key, group);
+    }
+
+    this.providers = fetched.map((r) => r.option);
+    const liveServices: MarketService[] = [];
+    for (const [, rows] of groups) {
+      rows.sort((a, b) => a.option.costInr - b.option.costInr);
+      const primary = rows[0];
+      const backups = rows.slice(1, 3).map((r) => r.option);
+      const min = Number(primary.service.min || 1);
+      const max = Number(primary.service.max || 0);
+      liveServices.push({
+        id: `${primary.option.key}:${primary.option.serviceId}`,
+        name: primary.service.name,
+        platform: this.platformFor(`${primary.service.category || ''} ${primary.service.name}`),
+        category: primary.service.category || primary.service.type || 'General',
+        country: this.countryFor(`${primary.service.category || ''} ${primary.service.name}`),
+        price: Number((primary.option.costInr * 1.15).toFixed(4)),
+        margin_pct: 15,
+        speed: this.speedFor(primary.service.name),
+        refill: primary.option.refill ? 'Refill available' : 'No refill',
+        quality: this.qualityFor(`${primary.service.category || ''} ${primary.service.name}`),
+        min: Number.isFinite(min) ? min : 1,
+        max: Number.isFinite(max) && max > 0 ? max : null,
+        provider: primary.option.name,
+        providerServiceId: primary.option.serviceId,
+        providerCostInr: Number(primary.option.costInr.toFixed(4)),
+        providerRate: primary.option.rate,
+        providerCurrency: primary.option.currency,
+        backupProviders: backups,
+      });
+    }
+    liveServices.sort((a, b) => a.platform.localeCompare(b.platform) || a.price - b.price);
+    this.services = liveServices;
+    this.reindex();
+    this.logger.log(`Provider catalog synced: ${this.services.length} best-priced services from ${this.providers.length} provider endpoints`);
+  }
+
+  providerStats() {
+    const counts: Record<string, number> = {};
+    for (const p of this.providers) counts[p.name] = (counts[p.name] || 0) + 1;
+    return { live: this.providers.length > 0, services: this.services.length, providers: counts };
+  }
+
+  async fulfill(service: MarketService, quantity: number, link: string) {
+    const candidates = [
+      this.providerByServiceId.get(service.id),
+      ...(service.backupProviders || []),
+    ].filter(Boolean) as ProviderOption[];
+    let lastError = 'No provider route configured';
+    for (const provider of candidates) {
+      const cfg = this.providerConfigs().find((p) => p.key === provider.key);
+      if (!cfg?.apiKey) continue;
+      try {
+        const res = await this.providerPost<{ order?: string | number; error?: string }>(provider.apiUrl, cfg.apiKey, {
+          action: 'add',
+          service: provider.serviceId,
+          link,
+          quantity,
+        });
+        if (res.order) {
+          return {
+            provider: provider.name,
+            providerServiceId: provider.serviceId,
+            providerOrderId: String(res.order),
+            providerCurrency: provider.currency,
+          };
+        }
+        lastError = res.error || `${provider.name} rejected order`;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : `${provider.name} failed`;
+      }
+    }
+    throw new Error(lastError);
   }
 
   all() {

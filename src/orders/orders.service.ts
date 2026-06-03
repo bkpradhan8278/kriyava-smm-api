@@ -19,6 +19,7 @@ export class OrdersService {
     charge: unknown;
     status: string;
     provider: string;
+    providerOrderId?: string | null;
     createdAt: Date;
   }) {
     return {
@@ -31,6 +32,7 @@ export class OrdersService {
       charge: Number(o.charge),
       status: o.status,
       provider: o.provider,
+      providerOrderId: o.providerOrderId,
       at: o.createdAt,
     };
   }
@@ -64,13 +66,46 @@ export class OrdersService {
           link: link || '(none)',
           quantity: qty,
           charge,
-          status: 'Processing',
+          status: 'Queued',
           provider: svc.provider || 'auto',
+          providerServiceId: svc.providerServiceId,
+          providerCurrency: svc.providerCurrency,
         },
       });
     });
 
-    return this.shape(order);
+    try {
+      const fulfillment = await this.services.fulfill(svc, qty, link);
+      const routed = await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'Processing',
+          provider: fulfillment.provider,
+          providerServiceId: fulfillment.providerServiceId,
+          providerOrderId: fulfillment.providerOrderId,
+          providerCurrency: fulfillment.providerCurrency,
+        },
+      });
+      return this.shape(routed);
+    } catch (err) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.order.update({ where: { id: order.id }, data: { status: 'Failed' } });
+        await tx.user.update({
+          where: { id: userId },
+          data: { balance: { increment: charge }, spent: { decrement: charge } },
+        });
+        await tx.transaction.create({
+          data: {
+            userId,
+            type: 'Refund',
+            amount: charge,
+            method: 'Wallet',
+            note: `Provider failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+          },
+        });
+      });
+      throw new BadRequestException(`Provider order failed: ${err instanceof Error ? err.message : 'try again later'}`);
+    }
   }
 
   async list(userId: string) {

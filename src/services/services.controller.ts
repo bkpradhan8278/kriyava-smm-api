@@ -18,6 +18,11 @@ export class ServicesController {
         (s.name + ' ' + s.platform + ' ' + s.category).toLowerCase().includes(needle),
       );
     }
-    return { count: list.length, services: list };
+    return { count: list.length, source: this.services.providerStats(), services: list };
+  }
+
+  @Get('provider-status')
+  providerStatus() {
+    return this.services.providerStats();
   }
 }
