@@ -58,6 +58,7 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
   private byId = new Map<string, MarketService>();
   private providers: ProviderOption[] = [];
   private providerByServiceId = new Map<string, ProviderOption>();
+  private providerBalances = new Map<string, { balance: number; currency: string }>();
   private refreshTimer?: ReturnType<typeof setInterval>;
 
   constructor(private config: ConfigService) {
@@ -138,9 +139,12 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
     return data;
   }
 
-  private async providerCurrency(apiUrl: string, apiKey: string) {
-    const data = await this.providerPost<{ currency?: string }>(apiUrl, apiKey, { action: 'balance' });
-    return (data.currency || 'INR').toUpperCase();
+  private async fetchProviderInfo(apiUrl: string, apiKey: string): Promise<{ currency: string; balance: number }> {
+    const data = await this.providerPost<{ balance?: string; currency?: string }>(apiUrl, apiKey, { action: 'balance' });
+    return {
+      currency: (data.currency || 'INR').toUpperCase(),
+      balance: Number(data.balance || 0),
+    };
   }
 
   private costInr(rate: number, currency: string) {
@@ -202,7 +206,9 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
     const fetched: Array<{ service: ProviderApiService; option: ProviderOption; matchKey: string }> = [];
     for (const cfg of configs) {
       try {
-        const currency = await this.providerCurrency(cfg.apiUrl, cfg.apiKey!);
+        const { currency, balance } = await this.fetchProviderInfo(cfg.apiUrl, cfg.apiKey!);
+        this.providerBalances.set(cfg.key, { balance, currency });
+        this.logger.log(`${cfg.name} balance: ${balance} ${currency}`);
         const services = await this.providerPost<ProviderApiService[]>(cfg.apiUrl, cfg.apiKey!, { action: 'services' });
         for (const service of Array.isArray(services) ? services : []) {
           const rate = Number(service.rate);
@@ -277,7 +283,12 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
   providerStats() {
     const counts: Record<string, number> = {};
     for (const p of this.providers) counts[p.name] = (counts[p.name] || 0) + 1;
-    return { live: this.providers.length > 0, services: this.services.length, providers: counts };
+    const balances: Record<string, string> = {};
+    for (const [key, info] of this.providerBalances) {
+      const cfg = this.providerConfigs().find((p) => p.key === key);
+      if (cfg) balances[cfg.name] = `${info.balance.toFixed(2)} ${info.currency}`;
+    }
+    return { live: this.providers.length > 0, services: this.services.length, providers: counts, balances };
   }
 
   async fulfill(service: MarketService, quantity: number, link: string) {
@@ -289,6 +300,18 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
     for (const provider of candidates) {
       const cfg = this.providerConfigs().find((p) => p.key === provider.key);
       if (!cfg?.apiKey) continue;
+
+      // Skip provider if our balance there is too low for this order
+      const acctBal = this.providerBalances.get(provider.key);
+      if (acctBal) {
+        const orderCost = (provider.rate * quantity) / 1000;
+        if (acctBal.balance < orderCost) {
+          lastError = `${provider.name} skipped: balance ${acctBal.balance.toFixed(3)} ${acctBal.currency} < needed ${orderCost.toFixed(3)}`;
+          this.logger.warn(`Routing: ${lastError} — trying next provider`);
+          continue;
+        }
+      }
+
       try {
         const res = await this.providerPost<{ order?: string | number; error?: string }>(provider.apiUrl, cfg.apiKey, {
           action: 'add',
@@ -297,6 +320,9 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
           quantity,
         });
         if (res.order) {
+          this.logger.log(`Order placed via ${provider.name} (svc ${provider.serviceId}) qty=${quantity}`);
+          // Deduct from cached balance so subsequent orders in the same refresh window route correctly
+          if (acctBal) acctBal.balance -= (provider.rate * quantity) / 1000;
           return {
             provider: provider.name,
             providerServiceId: provider.serviceId,
@@ -305,8 +331,10 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
           };
         }
         lastError = res.error || `${provider.name} rejected order`;
+        this.logger.warn(`${provider.name} rejected: ${lastError}`);
       } catch (err) {
         lastError = err instanceof Error ? err.message : `${provider.name} failed`;
+        this.logger.warn(`${provider.name} error: ${lastError}`);
       }
     }
     throw new Error(lastError);
