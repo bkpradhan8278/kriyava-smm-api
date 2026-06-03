@@ -3,7 +3,7 @@ import * as crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { WalletService } from '../wallet/wallet.service';
 
-const MIN_TOPUP = 50;
+const MIN_TOPUP = 10;
 
 @Injectable()
 export class PaymentsService {

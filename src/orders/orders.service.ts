@@ -85,7 +85,7 @@ export class OrdersService {
   async refill(userId: string, orderId: string) {
     const order = await this.prisma.order.findFirst({ where: { id: orderId, userId } });
     if (!order) throw new NotFoundException('Order not found');
-    // demo: mark as processing again (a real impl would call the provider refill endpoint)
+    // Provider refill integration can be connected here when fulfillment API keys are ready.
     return { ok: true, orderId, message: 'Refill requested' };
   }
 
