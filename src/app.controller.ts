@@ -1,14 +1,16 @@
-import { Controller, Get, Headers, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ServicesService } from './services/services.service';
 import { PrismaService } from './prisma/prisma.service';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { AdminGuard } from './auth/admin.guard';
+import { CurrentUser } from './auth/current-user.decorator';
+import type { AuthUser } from './auth/current-user.decorator';
 
 @Controller()
 export class AppController {
   constructor(
     private services: ServicesService,
     private prisma: PrismaService,
-    private config: ConfigService,
   ) {}
 
   @Get('health')
@@ -21,67 +23,81 @@ export class AppController {
     };
   }
 
-  // Admin summary — secured by JWT_SECRET header. Returns today's orders + profit.
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Get('admin/summary')
-  async adminSummary(@Headers('x-admin-key') key: string) {
-    if (key !== this.config.get<string>('JWT_SECRET')) throw new UnauthorizedException();
-
+  async adminSummary(@CurrentUser() _user: AuthUser) {
     const now = new Date();
     const todayStart = new Date(now);
     todayStart.setUTCHours(0, 0, 0, 0);
-    // shift for IST (+5:30)
-    const istStart = new Date(todayStart.getTime() - 5.5 * 60 * 60 * 1000);
+    const istShift = 5.5 * 60 * 60 * 1000;
+    const start = new Date(todayStart.getTime() - istShift);
 
-    const [users, allOrders, todayOrders, todayTxns, providerStats] = await Promise.all([
+    const [totalUsers, allOrders, todayOrders, allDeposits, todayDeposits, users] = await Promise.all([
       this.prisma.user.count(),
-      this.prisma.order.findMany({ orderBy: { createdAt: 'desc' }, take: 50 }),
-      this.prisma.order.findMany({ where: { createdAt: { gte: istStart } }, orderBy: { createdAt: 'desc' } }),
-      this.prisma.transaction.findMany({ where: { createdAt: { gte: istStart } }, orderBy: { createdAt: 'desc' } }),
-      this.services.providerStats(),
+      this.prisma.order.findMany({ orderBy: { createdAt: 'desc' }, take: 200 }),
+      this.prisma.order.findMany({ where: { createdAt: { gte: start } }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.transaction.findMany({ where: { type: 'Deposit' }, orderBy: { createdAt: 'desc' }, take: 100 }),
+      this.prisma.transaction.findMany({ where: { type: 'Deposit', createdAt: { gte: start } }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.user.findMany({ orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, name: true, email: true, balance: true, spent: true, apiKey: true, role: true, createdAt: true } }),
     ]);
 
     const margin = 0.15;
-    const summarize = (orders: typeof allOrders) =>
+    const enrichOrders = (orders: typeof allOrders) =>
       orders.map((o) => {
         const charge = Number(o.charge);
         const providerCost = +(charge / (1 + margin)).toFixed(4);
-        const profit = +(charge - providerCost).toFixed(4);
         return {
           id: o.id,
           service: o.serviceName,
           platform: o.platform,
           qty: o.quantity,
-          chargedToWallet: charge,
+          charge,
           providerCost,
-          profit,
-          marginPct: '15%',
+          profit: +(charge - providerCost).toFixed(4),
           provider: o.provider,
           status: o.status,
           time: new Date(o.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
         };
       });
 
-    const totals = (orders: ReturnType<typeof summarize>) => ({
-      orders: orders.length,
-      totalCharged: +orders.reduce((s, o) => s + o.chargedToWallet, 0).toFixed(2),
-      totalProviderCost: +orders.reduce((s, o) => s + o.providerCost, 0).toFixed(2),
-      totalProfit: +orders.reduce((s, o) => s + o.profit, 0).toFixed(2),
-    });
+    const calcTotals = (orders: ReturnType<typeof enrichOrders>) => {
+      const active = orders.filter((o) => o.status !== 'Failed' && o.status !== 'Canceled');
+      return {
+        count: orders.length,
+        activeCount: active.length,
+        failedCount: orders.filter((o) => o.status === 'Failed').length,
+        revenue: +active.reduce((s, o) => s + o.charge, 0).toFixed(2),
+        providerCost: +active.reduce((s, o) => s + o.providerCost, 0).toFixed(2),
+        profit: +active.reduce((s, o) => s + o.profit, 0).toFixed(2),
+      };
+    };
 
-    const todaySummary = summarize(todayOrders);
-    const allSummary = summarize(allOrders);
+    const enrichedAll = enrichOrders(allOrders);
+    const enrichedToday = enrichOrders(todayOrders);
 
     return {
       asOf: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
-      totalUsers: users,
-      providerStatus: providerStats,
-      today: { ...totals(todaySummary), orders: todaySummary },
-      allTime: totals(allSummary),
-      todayDeposits: todayTxns.filter((t) => t.type === 'Deposit').map((t) => ({
-        amount: Number(t.amount),
-        method: t.method,
-        time: new Date(t.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      totalUsers,
+      providerStatus: this.services.providerStats(),
+      today: { ...calcTotals(enrichedToday), orders: enrichedToday },
+      allTime: calcTotals(enrichedAll),
+      recentOrders: enrichedAll.slice(0, 50),
+      users: users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        balance: Number(u.balance),
+        spent: Number(u.spent),
+        role: u.role,
+        joined: new Date(u.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
       })),
+      deposits: allDeposits.map((d) => ({
+        amount: Number(d.amount),
+        method: d.method,
+        note: d.note,
+        time: new Date(d.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      })),
+      todayDeposits: todayDeposits.reduce((s, d) => s + Number(d.amount), 0),
     };
   }
 }
