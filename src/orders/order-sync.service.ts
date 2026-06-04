@@ -59,15 +59,20 @@ export class OrderSyncService implements OnModuleInit, OnModuleDestroy {
   }
 
   async syncAll() {
-    // All orders that are still in-flight and have a providerOrderId
-    const pending = await this.prisma.order.findMany({
-      where: {
-        status: { in: ['Processing', 'In progress', 'Queued'] },
-        NOT: { providerOrderId: null },
-      },
-      select: { id: true, provider: true, providerOrderId: true },
-      take: 500,
-    });
+    let pending: Array<{ id: string; provider: string; providerOrderId: string | null }> = [];
+    try {
+      pending = await this.prisma.order.findMany({
+        where: {
+          status: { in: ['Processing', 'In progress', 'Queued'] },
+          providerOrderId: { not: null },
+        },
+        select: { id: true, provider: true, providerOrderId: true },
+        take: 500,
+      });
+    } catch (err) {
+      this.logger.warn(`Order sync DB query failed: ${err instanceof Error ? err.message : 'unknown'}`);
+      return;
+    }
 
     if (pending.length === 0) return;
     this.logger.log(`Order sync: checking ${pending.length} in-flight orders`);

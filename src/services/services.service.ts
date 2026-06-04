@@ -17,6 +17,7 @@ export interface MarketService {
   min: number | null;
   max: number | null;
   provider: string;
+  description?: string;
   providerServiceId?: string;
   providerCostInr?: number;
   providerRate?: number;
@@ -34,6 +35,7 @@ export interface ProviderOption {
   costInr: number;
   refill: boolean;
   cancel: boolean;
+  dripfeed?: boolean;
 }
 
 interface ProviderApiService {
@@ -150,6 +152,52 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
   private costInr(rate: number, currency: string) {
     const usdInr = Number(this.config.get<string>('USD_INR_RATE') || 84);
     return currency === 'USD' ? rate * usdInr : rate;
+  }
+
+  private descriptionFor(name: string, speed: string, refill: string, quality: number, min: number | null, max: number | null, country: string, canCancel: boolean): string {
+    const parts: string[] = [];
+    const n = name.toLowerCase();
+
+    // What is this service
+    const type =
+      n.includes('follower') ? 'followers' :
+      n.includes('like') ? 'likes' :
+      n.includes('view') || n.includes('watch') ? 'views' :
+      n.includes('comment') ? 'comments' :
+      n.includes('subscriber') || n.includes('sub') ? 'subscribers' :
+      n.includes('member') ? 'members' :
+      n.includes('story') ? 'story views' :
+      n.includes('reel') ? 'reel views' :
+      n.includes('share') ? 'shares' :
+      n.includes('save') ? 'saves' :
+      'engagement';
+
+    // Speed
+    const speedTag = speed === 'Instant' ? 'starts instantly' :
+                     speed === 'Super fast' ? 'super fast delivery' :
+                     speed === 'Fast' ? 'fast delivery' : 'gradual delivery';
+
+    parts.push(`Delivers ${type} at ${speedTag}.`);
+
+    // Country / quality
+    if (country === 'India') parts.push('Indian profiles.');
+    else if (n.includes('worldwide') || n.includes('global')) parts.push('Worldwide accounts.');
+
+    // Quality signals
+    if (n.includes('real') || n.includes('genuine') || n.includes('organic')) parts.push('Real & active accounts.');
+    else if (n.includes('bot') || n.includes('cheap')) parts.push('Low-cost, non-drop not guaranteed.');
+    else if (n.includes('non-drop') || n.includes('non drop')) parts.push('Non-drop guaranteed.');
+    else if (quality >= 4) parts.push('High quality profiles.');
+
+    // Refill
+    if (refill === 'Refill available') parts.push('Includes refill guarantee.');
+    else parts.push('No refill included.');
+
+    // Min/max
+    if (min) parts.push(`Min order: ${min.toLocaleString()}.`);
+    if (canCancel) parts.push('Cancel button available.');
+
+    return parts.join(' ');
   }
 
   /**
@@ -281,20 +329,27 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
       const max = Number(primary.service.max || 0);
       const svcCategory = primary.service.category || primary.service.type || 'General';
       const markup = this.markupPct(primary.service.name, svcCategory, primary.option.costInr);
+      const speed = this.speedFor(primary.service.name);
+      const refill = primary.option.refill ? 'Refill available' : 'No refill';
+      const quality = this.qualityFor(`${svcCategory} ${primary.service.name}`);
+      const country = this.countryFor(`${svcCategory} ${primary.service.name}`);
+      const safeMin = Number.isFinite(min) ? min : 1;
+      const safeMax = Number.isFinite(max) && max > 0 ? max : null;
       liveServices.push({
         id: `${primary.option.key}:${primary.option.serviceId}`,
         name: primary.service.name,
         platform: this.platformFor(`${svcCategory} ${primary.service.name}`),
         category: svcCategory,
-        country: this.countryFor(`${svcCategory} ${primary.service.name}`),
+        country,
         price: Number((primary.option.costInr * (1 + markup / 100)).toFixed(4)),
         margin_pct: markup,
-        speed: this.speedFor(primary.service.name),
-        refill: primary.option.refill ? 'Refill available' : 'No refill',
-        quality: this.qualityFor(`${primary.service.category || ''} ${primary.service.name}`),
-        min: Number.isFinite(min) ? min : 1,
-        max: Number.isFinite(max) && max > 0 ? max : null,
+        speed,
+        refill,
+        quality,
+        min: safeMin,
+        max: safeMax,
         provider: primary.option.name,
+        description: this.descriptionFor(primary.service.name, speed, refill, quality, safeMin, safeMax, country, Boolean(primary.option.cancel)),
         providerServiceId: primary.option.serviceId,
         providerCostInr: Number(primary.option.costInr.toFixed(4)),
         providerRate: primary.option.rate,
