@@ -1,9 +1,35 @@
 import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { RegisterDto, LoginDto } from './dto';
+
+// --- Firebase ID-token verification via Google's public keys (no Web API key required) ---
+
+const _fbKeyCache: { keys: Record<string, string>; exp: number } = { keys: {}, exp: 0 };
+
+async function fetchFirebasePublicKey(kid: string): Promise<string> {
+  if (Date.now() < _fbKeyCache.exp && _fbKeyCache.keys[kid]) {
+    return _fbKeyCache.keys[kid];
+  }
+  let res: Response;
+  try {
+    res = await fetch(
+      'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com',
+    );
+  } catch {
+    throw new Error('Could not reach Google key server');
+  }
+  if (!res.ok) throw new Error(`Google key server returned ${res.status}`);
+  const keys = (await res.json()) as Record<string, string>;
+  _fbKeyCache.keys = keys;
+  _fbKeyCache.exp = Date.now() + 3_600_000;
+  const key = keys[kid];
+  if (!key) throw new Error(`No public key for kid=${kid}`);
+  return key;
+}
 
 const WELCOME_CREDIT = 0;
 
@@ -94,31 +120,56 @@ export class AuthService {
     return this.publicUser(cleanUser);
   }
 
-  // Verifies a Firebase ID token using the Firebase Accounts REST API.
-  // Requires FIREBASE_WEB_API_KEY env var (same value as NEXT_PUBLIC_FIREBASE_API_KEY on the frontend).
-  // Throws UnauthorizedException if the token is invalid or the email is unverified.
+  // Verifies a Firebase ID token by checking its RS256 signature against Google's published
+  // public keys and validating standard JWT claims. No Web API key or service account required.
   private async verifyFirebaseIdToken(idToken: string): Promise<{ email: string; name: string }> {
-    const apiKey = process.env.FIREBASE_WEB_API_KEY;
-    if (!apiKey) throw new UnauthorizedException('Google sign-in is not configured on the server (missing FIREBASE_WEB_API_KEY)');
+    const PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'kriyava-9d099';
+    const b64 = (s: string) => s.replace(/-/g, '+').replace(/_/g, '/');
 
-    const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-      },
-    );
+    const parts = idToken.split('.');
+    if (parts.length !== 3) throw new UnauthorizedException('Invalid Firebase token format');
 
-    if (!res.ok) throw new UnauthorizedException('Invalid Google ID token');
-
-    const data = await res.json() as { users?: Array<{ email?: string; displayName?: string; emailVerified?: boolean }> };
-    const fbUser = data?.users?.[0];
-    if (!fbUser?.email || !fbUser.emailVerified) {
-      throw new UnauthorizedException('Could not verify Google account — email unverified or token invalid');
+    let header: { kid?: string; alg?: string };
+    let payload: {
+      sub?: string; email?: string; name?: string; email_verified?: boolean;
+      iss?: string; aud?: string; exp?: number;
+    };
+    try {
+      header = JSON.parse(Buffer.from(b64(parts[0]), 'base64').toString('utf8'));
+      payload = JSON.parse(Buffer.from(b64(parts[1]), 'base64').toString('utf8'));
+    } catch {
+      throw new UnauthorizedException('Malformed Firebase token');
     }
 
-    return { email: fbUser.email, name: fbUser.displayName || 'Creator' };
+    const now = Math.floor(Date.now() / 1000);
+    if (!payload.exp || payload.exp < now)
+      throw new UnauthorizedException('Firebase token has expired — please sign in again');
+    if (payload.iss !== `https://securetoken.google.com/${PROJECT_ID}`)
+      throw new UnauthorizedException('Firebase token issuer mismatch');
+    if (payload.aud !== PROJECT_ID)
+      throw new UnauthorizedException('Firebase token audience mismatch');
+    if (!payload.email)
+      throw new UnauthorizedException('Firebase token has no email claim');
+    if (!payload.email_verified)
+      throw new UnauthorizedException('Google account email is not verified');
+    if (!header.kid || header.alg !== 'RS256')
+      throw new UnauthorizedException('Firebase token uses unsupported algorithm');
+
+    let publicKey: string;
+    try {
+      publicKey = await fetchFirebasePublicKey(header.kid);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[Firebase] Failed to fetch public key:', msg);
+      throw new UnauthorizedException('Google sign-in temporarily unavailable — please try again');
+    }
+
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(`${parts[0]}.${parts[1]}`);
+    const valid = verifier.verify(publicKey, Buffer.from(b64(parts[2]), 'base64'));
+    if (!valid) throw new UnauthorizedException('Firebase token signature is invalid');
+
+    return { email: payload.email, name: payload.name || 'Creator' };
   }
 
   async social(idToken: string, referralCode?: string) {
