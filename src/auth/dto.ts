@@ -32,9 +32,11 @@ export class UpdateProfileDto {
 }
 
 export class SocialDto {
-  @IsEmail()
-  email!: string;
-
   @IsString()
-  name!: string;
+  @MinLength(20)
+  idToken!: string;
+
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 }

@@ -94,7 +94,36 @@ export class AuthService {
     return this.publicUser(cleanUser);
   }
 
-  async social(email: string, name: string, referralCode?: string) {
+  // Verifies a Firebase ID token using the Firebase Accounts REST API.
+  // Requires FIREBASE_WEB_API_KEY env var (same value as NEXT_PUBLIC_FIREBASE_API_KEY on the frontend).
+  // Throws UnauthorizedException if the token is invalid or the email is unverified.
+  private async verifyFirebaseIdToken(idToken: string): Promise<{ email: string; name: string }> {
+    const apiKey = process.env.FIREBASE_WEB_API_KEY;
+    if (!apiKey) throw new UnauthorizedException('Google sign-in is not configured on the server (missing FIREBASE_WEB_API_KEY)');
+
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      },
+    );
+
+    if (!res.ok) throw new UnauthorizedException('Invalid Google ID token');
+
+    const data = await res.json() as { users?: Array<{ email?: string; displayName?: string; emailVerified?: boolean }> };
+    const fbUser = data?.users?.[0];
+    if (!fbUser?.email || !fbUser.emailVerified) {
+      throw new UnauthorizedException('Could not verify Google account — email unverified or token invalid');
+    }
+
+    return { email: fbUser.email, name: fbUser.displayName || 'Creator' };
+  }
+
+  async social(idToken: string, referralCode?: string) {
+    const { email, name } = await this.verifyFirebaseIdToken(idToken);
+
     let user = await this.prisma.user.findUnique({ where: { email } });
     const isNew = !user;
     if (!user) {

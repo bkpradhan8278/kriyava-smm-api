@@ -8,9 +8,12 @@ import { JwtStrategy } from './jwt.strategy';
 @Module({
   imports: [
     PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'kriyava-dev-secret-change-me',
-      signOptions: { expiresIn: '30d' },
+    JwtModule.registerAsync({
+      useFactory: () => {
+        const secret = process.env.JWT_SECRET;
+        if (!secret) throw new Error('JWT_SECRET environment variable is not set — refusing to start');
+        return { secret, signOptions: { expiresIn: '30d' } };
+      },
     }),
   ],
   controllers: [AuthController],

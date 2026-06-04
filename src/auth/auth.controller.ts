@@ -20,8 +20,8 @@ export class AuthController {
   }
 
   @Post('social')
-  social(@Body() dto: SocialDto & { referralCode?: string }) {
-    return this.auth.social(dto.email, dto.name, dto.referralCode);
+  social(@Body() dto: SocialDto) {
+    return this.auth.social(dto.idToken, dto.referralCode);
   }
 
   @UseGuards(JwtAuthGuard)
