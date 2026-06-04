@@ -52,8 +52,9 @@ model Order {
   platform    String?
   link        String
   quantity    Int
-  charge      Decimal  @db.Decimal(12, 4)
-  status      String   @default("Processing")
+  charge          Decimal  @db.Decimal(12, 4)
+  providerCostInr Decimal  @default(0) @db.Decimal(12, 4)
+  status          String   @default("Processing")
   provider    String   @default("auto")
   providerServiceId String?
   providerOrderId   String?

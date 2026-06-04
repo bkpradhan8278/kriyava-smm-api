@@ -68,6 +68,7 @@ export class OrdersService {
           link: link || '(none)',
           quantity: qty,
           charge,
+          providerCostInr: Number(((svc.providerCostInr || 0) * qty / 1000).toFixed(4)),
           status: 'Queued',
           provider: svc.provider || 'auto',
           providerServiceId: svc.providerServiceId,

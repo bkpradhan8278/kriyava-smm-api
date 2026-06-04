@@ -41,11 +41,10 @@ export class AppController {
       this.prisma.user.findMany({ orderBy: { createdAt: 'desc' }, take: 100, select: { id: true, name: true, email: true, balance: true, spent: true, apiKey: true, role: true, createdAt: true } }),
     ]);
 
-    const margin = 0.15;
     const enrichOrders = (orders: typeof allOrders) =>
       orders.map((o) => {
         const charge = Number(o.charge);
-        const providerCost = +(charge / (1 + margin)).toFixed(4);
+        const providerCost = Number(o.providerCostInr) || 0;
         return {
           id: o.id,
           service: o.serviceName,
