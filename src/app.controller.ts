@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, NotFoundException, BadRequestException, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, NotFoundException, BadRequestException, UseGuards, HttpCode } from '@nestjs/common';
 import { ServicesService } from './services/services.service';
 import { PrismaService } from './prisma/prisma.service';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
@@ -98,6 +98,14 @@ export class AppController {
       })),
       todayDeposits: todayDeposits.reduce((s, d) => s + Number(d.amount), 0),
     };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin/providers/refresh')
+  @HttpCode(200)
+  async adminRefreshProviders() {
+    await this.services.refreshProviders();
+    return { ok: true, providerStatus: this.services.providerStats() };
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)
