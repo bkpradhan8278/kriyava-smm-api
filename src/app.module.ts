@@ -12,6 +12,7 @@ import { AiModule } from './ai/ai.module';
 import { EmailModule } from './email/email.module';
 import { ReferralsModule } from './referrals/referrals.module';
 import { ApiV2Module } from './apiv2/apiv2.module';
+import { LeadsModule } from './leads/leads.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ApiV2Module } from './apiv2/apiv2.module';
     AiModule,
     ReferralsModule,
     ApiV2Module,
+    LeadsModule,
   ],
   controllers: [AppController],
 })

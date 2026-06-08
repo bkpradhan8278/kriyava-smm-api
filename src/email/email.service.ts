@@ -68,6 +68,22 @@ export class EmailService {
     }
   }
 
+  // Notify the admin inbox when a new contact-form lead arrives.
+  async sendContactLead(name: string, email: string, subject: string, message: string) {
+    const admin = this.config.get<string>('ADMIN_EMAIL') || 'getkriyava@gmail.com';
+    const html = layout('New Contact Lead', `
+      <h2>New contact form submission 📬</h2>
+      <div class="card">
+        <div class="card-row"><span class="lbl">Name</span><span class="val">${name}</span></div>
+        <div class="card-row"><span class="lbl">Email</span><span class="val">${email}</span></div>
+        <div class="card-row"><span class="lbl">Subject</span><span class="val">${subject}</span></div>
+      </div>
+      <p style="white-space:pre-wrap">${message.slice(0, 1500)}</p>
+      <a href="${PANEL_URL}/admin" class="btn">Open Admin → Leads</a>
+    `);
+    await this.send(admin, `New lead: ${subject} — ${name}`, html);
+  }
+
   async sendWelcome(to: string, name: string, referralCode: string) {
     const html = layout('Welcome to Kriyava SMM!', `
       <h2>Welcome, ${name}! 🎉</h2>

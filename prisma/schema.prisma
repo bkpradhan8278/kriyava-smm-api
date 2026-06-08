@@ -93,3 +93,18 @@ model Config {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+model Lead {
+  id        String   @id @default(cuid())
+  source    String   // "contact" | "ai_chat"
+  name      String?
+  email     String?
+  subject   String?
+  message   String
+  meta      String?  // JSON: reply, surface, department, etc.
+  status    String   @default("New")
+  createdAt DateTime @default(now())
+
+  @@index([source])
+  @@index([createdAt])
+}

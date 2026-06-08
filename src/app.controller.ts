@@ -175,6 +175,67 @@ export class AppController {
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('admin/leads')
+  async adminLeads() {
+    const [leads, tickets, ticketUsers] = await Promise.all([
+      this.prisma.lead.findMany({ orderBy: { createdAt: 'desc' }, take: 300 }),
+      this.prisma.ticket.findMany({ orderBy: { createdAt: 'desc' }, take: 200 }),
+      this.prisma.user.findMany({ select: { id: true, name: true, email: true } }),
+    ]);
+    const userMap = new Map(ticketUsers.map((u) => [u.id, u]));
+
+    type LeadRow = {
+      id: string; kind: 'lead' | 'ticket'; source: string;
+      name: string | null; email: string | null; subject: string | null;
+      message: string; reply: string | null; status: string; time: string;
+    };
+
+    const rows: LeadRow[] = [];
+    for (const l of leads) {
+      let reply: string | null = null;
+      try { if (l.meta) reply = (JSON.parse(l.meta) as { reply?: string }).reply || null; } catch { /* ignore */ }
+      rows.push({
+        id: l.id, kind: 'lead', source: l.source,
+        name: l.name, email: l.email, subject: l.subject,
+        message: l.message, reply, status: l.status,
+        time: new Date(l.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      });
+    }
+    for (const t of tickets) {
+      const u = userMap.get(t.userId);
+      rows.push({
+        id: t.id, kind: 'ticket', source: 'ticket',
+        name: u?.name || null, email: u?.email || null, subject: t.subject,
+        message: t.message, reply: null, status: t.status,
+        time: new Date(t.createdAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      });
+    }
+    rows.sort((a, b) => (a.time < b.time ? 1 : -1));
+
+    const counts = {
+      total: rows.length,
+      contact: rows.filter((r) => r.source === 'contact').length,
+      ai_chat: rows.filter((r) => r.source === 'ai_chat').length,
+      ticket: rows.filter((r) => r.source === 'ticket').length,
+      unresolved: rows.filter((r) => r.status === 'New' || r.status === 'Open').length,
+    };
+    return { counts, leads: rows };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin/leads/status')
+  @HttpCode(200)
+  async adminLeadStatus(@Body() body: { id?: string; kind?: string; status?: string }) {
+    if (!body.id || !body.status) throw new BadRequestException('id and status required');
+    if (body.kind === 'ticket') {
+      await this.prisma.ticket.update({ where: { id: body.id }, data: { status: body.status } });
+    } else {
+      await this.prisma.lead.update({ where: { id: body.id }, data: { status: body.status } });
+    }
+    return { ok: true };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Post('admin/add-funds')
   async adminAddFunds(@Body() body: { email?: string; amount?: number; note?: string }) {
     if (!body.email) throw new BadRequestException('email required');
