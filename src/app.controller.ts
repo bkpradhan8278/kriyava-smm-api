@@ -109,6 +109,47 @@ export class AppController {
   }
 
   @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('admin/service-catalog')
+  async adminServiceCatalog() {
+    return this.services.providerAdminStats();
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Get('admin/catalog')
+  async adminFullCatalog() {
+    return { services: this.services.adminCatalog() };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin/providers/toggle')
+  @HttpCode(200)
+  async adminProviderToggle(@Body() body: { key?: string; enabled?: boolean }) {
+    if (!body.key) throw new BadRequestException('key required');
+    if (typeof body.enabled !== 'boolean') throw new BadRequestException('enabled (boolean) required');
+    await this.services.setProviderEnabled(body.key, body.enabled);
+    return { ok: true };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin/services/toggle')
+  @HttpCode(200)
+  async adminServiceToggle(@Body() body: { serviceId?: string; enabled?: boolean }) {
+    if (!body.serviceId) throw new BadRequestException('serviceId required');
+    if (typeof body.enabled !== 'boolean') throw new BadRequestException('enabled (boolean) required');
+    await this.services.setServiceEnabled(body.serviceId, body.enabled);
+    return { ok: true };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Post('admin/services/markup')
+  @HttpCode(200)
+  async adminMarkupOverride(@Body() body: { target?: string; value?: number | null }) {
+    if (!body.target) throw new BadRequestException('target required');
+    await this.services.setMarkupOverride(body.target, body.value ?? null);
+    return { ok: true };
+  }
+
+  @UseGuards(JwtAuthGuard, AdminGuard)
   @Get('admin/referrals')
   async adminReferrals(@CurrentUser() _user: AuthUser) {
     const users = await this.prisma.user.findMany({

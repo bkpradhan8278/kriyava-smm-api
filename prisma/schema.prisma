@@ -87,3 +87,9 @@ model Favorite {
 
   @@unique([userId, serviceId])
 }
+
+model Config {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

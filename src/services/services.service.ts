@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from '../prisma/prisma.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -63,12 +64,16 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
   private providerBalances = new Map<string, { balance: number; currency: string }>();
   private refreshTimer?: ReturnType<typeof setInterval>;
 
-  constructor(private config: ConfigService) {
+  private disabledProviders = new Set<string>(); // provider keys: 'easy', 'luv', 'fine'
+  private disabledServices = new Set<string>();   // service IDs
+  private markupOverrides = new Map<string, number>(); // 'global' | platform name -> %
+
+  constructor(private config: ConfigService, private prisma: PrismaService) {
     this.load();
   }
 
   onModuleInit() {
-    void this.refreshProviders();
+    void this.loadAdminConfig().then(() => this.refreshProviders());
     this.refreshTimer = setInterval(() => void this.refreshProviders(), REFRESH_INTERVAL_MS);
   }
 
@@ -210,19 +215,16 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
    *   < ₹70   → 25%   (cheap followers, higher margin)
    * All other services                                → 20%
    */
-  private markupPct(name: string, category: string, costInr: number): number {
+  private markupPct(name: string, category: string, costInr: number, platform?: string): number {
+    if (this.markupOverrides.has('global')) return this.markupOverrides.get('global')!;
+    if (platform && this.markupOverrides.has(platform)) return this.markupOverrides.get(platform)!;
     const text = `${name} ${category}`.toLowerCase();
-    // Bulk engagement — very cheap, fixed 22%
-    if (/\b(view|like|story|stories|share|comment|reel|impression|reach|save)\b/.test(text)) {
-      return 22;
-    }
-    // Followers / subscribers / members — tiered
+    if (/\b(view|like|story|stories|share|comment|reel|impression|reach|save)\b/.test(text)) return 22;
     if (/\b(follower|subscriber|sub\b|member|fan)\b/.test(text)) {
       if (costInr >= 100) return 15;
-      if (costInr >= 70)  return 20;
+      if (costInr >= 70) return 20;
       return 25;
     }
-    // Default for everything else (Telegram, YouTube, etc.)
     return 20;
   }
 
@@ -272,6 +274,29 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 140);
+  }
+
+  private providerKey(name: string): string {
+    return name.toLowerCase().replace('smm', '').trim();
+  }
+
+  private async loadAdminConfig() {
+    try {
+      const rows = await this.prisma.config.findMany();
+      for (const row of rows) {
+        try {
+          const val = JSON.parse(row.value) as unknown;
+          if (row.key === 'disabled_providers') this.disabledProviders = new Set(val as string[]);
+          else if (row.key === 'disabled_services') this.disabledServices = new Set(val as string[]);
+          else if (row.key === 'markup_overrides') this.markupOverrides = new Map(Object.entries(val as Record<string, number>));
+        } catch { /* bad row, skip */ }
+      }
+    } catch { /* DB not ready, skip */ }
+  }
+
+  private async saveConfig(key: string, value: unknown) {
+    const v = JSON.stringify(value);
+    await this.prisma.config.upsert({ where: { key }, create: { key, value: v }, update: { value: v } });
   }
 
   async refreshProviders() {
@@ -328,7 +353,8 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
       const min = Number(primary.service.min || 1);
       const max = Number(primary.service.max || 0);
       const svcCategory = primary.service.category || primary.service.type || 'General';
-      const markup = this.markupPct(primary.service.name, svcCategory, primary.option.costInr);
+      const svcPlatform = this.platformFor(`${svcCategory} ${primary.service.name}`);
+      const markup = this.markupPct(primary.service.name, svcCategory, primary.option.costInr, svcPlatform);
       const speed = this.speedFor(primary.service.name);
       const refill = primary.option.refill ? 'Refill available' : 'No refill';
       const quality = this.qualityFor(`${svcCategory} ${primary.service.name}`);
@@ -338,7 +364,7 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
       liveServices.push({
         id: `${primary.option.key}:${primary.option.serviceId}`,
         name: primary.service.name,
-        platform: this.platformFor(`${svcCategory} ${primary.service.name}`),
+        platform: svcPlatform,
         category: svcCategory,
         country,
         price: Number((primary.option.costInr * (1 + markup / 100)).toFixed(4)),
@@ -435,14 +461,83 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
   }
 
   all() {
-    return this.services;
+    return this.services.filter(s =>
+      !this.disabledServices.has(s.id) &&
+      !this.disabledProviders.has(this.providerKey(s.provider || ''))
+    );
   }
 
   find(id: string): MarketService | undefined {
-    return this.byId.get(id);
+    const svc = this.byId.get(id);
+    if (!svc) return undefined;
+    if (this.disabledServices.has(id)) return undefined;
+    if (this.disabledProviders.has(this.providerKey(svc.provider || ''))) return undefined;
+    return svc;
   }
 
   count() {
     return this.services.length;
+  }
+
+  adminCatalog() {
+    return this.services.map(s => ({
+      id: s.id,
+      name: s.name,
+      platform: s.platform,
+      category: s.category,
+      provider: s.provider,
+      providerKey: this.providerKey(s.provider || ''),
+      providerCostInr: s.providerCostInr || 0,
+      margin_pct: s.margin_pct,
+      price: s.price,
+      min: s.min,
+      max: s.max,
+      enabled: !this.disabledServices.has(s.id) && !this.disabledProviders.has(this.providerKey(s.provider || '')),
+    }));
+  }
+
+  providerAdminStats() {
+    const counts: Record<string, number> = {};
+    for (const p of this.providers) counts[p.name] = (counts[p.name] || 0) + 1;
+    const balances: Record<string, string> = {};
+    for (const [key, info] of this.providerBalances) {
+      const cfg = this.providerConfigs().find(p => p.key === key);
+      if (cfg) balances[cfg.name] = `${info.balance.toFixed(2)} ${info.currency}`;
+    }
+    const configs = this.providerConfigs();
+    const providers = configs.map(cfg => ({
+      key: cfg.key,
+      name: cfg.name,
+      apiKeyMasked: cfg.apiKey ? `${cfg.apiKey.slice(0, 8)}${'•'.repeat(Math.max(0, (cfg.apiKey.length) - 8))}` : 'NOT SET',
+      enabled: !this.disabledProviders.has(cfg.key),
+      balance: balances[cfg.name] || '0.00 ?',
+      serviceCount: counts[cfg.name] || 0,
+    }));
+    return {
+      live: this.providers.length > 0,
+      totalServices: this.services.length,
+      providers,
+      markupOverrides: Object.fromEntries(this.markupOverrides),
+      platforms: [...new Set(this.services.map(s => s.platform))].sort(),
+    };
+  }
+
+  async setProviderEnabled(key: string, enabled: boolean) {
+    if (enabled) this.disabledProviders.delete(key);
+    else this.disabledProviders.add(key);
+    await this.saveConfig('disabled_providers', [...this.disabledProviders]);
+  }
+
+  async setServiceEnabled(serviceId: string, enabled: boolean) {
+    if (enabled) this.disabledServices.delete(serviceId);
+    else this.disabledServices.add(serviceId);
+    await this.saveConfig('disabled_services', [...this.disabledServices]);
+  }
+
+  async setMarkupOverride(target: string, value: number | null) {
+    if (value === null || value === undefined) this.markupOverrides.delete(target);
+    else this.markupOverrides.set(target, Math.max(1, Math.min(200, value)));
+    await this.saveConfig('markup_overrides', Object.fromEntries(this.markupOverrides));
+    void this.refreshProviders();
   }
 }
