@@ -26,14 +26,14 @@ export class OrdersService {
   }) {
     return {
       id: o.id,
-      serviceId: o.serviceId,
+      serviceId: this.services.publicId(o.serviceId),
       service: o.serviceName,
       platform: o.platform,
       link: o.link,
       qty: o.quantity,
       charge: Number(o.charge),
       status: o.status,
-      provider: o.provider,
+      provider: 'Kriyava Network', // never expose the real upstream provider
       providerOrderId: o.providerOrderId,
       at: o.createdAt,
     };
@@ -91,7 +91,7 @@ export class OrdersService {
       });
       // Send order email fire-and-forget
       void this.prisma.user.findUnique({ where: { id: userId } }).then((u) => {
-        if (u) void this.email.sendOrderPlaced(u.email, u.name, order.id, svc.name, qty, charge, fulfillment.provider);
+        if (u) void this.email.sendOrderPlaced(u.email, u.name, order.id, svc.name, qty, charge);
       });
       return this.shape(routed);
     } catch (err) {

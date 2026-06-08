@@ -112,17 +112,16 @@ export class EmailService {
     await this.send(to, `${fmt(amount)} added to your ${BRAND} wallet ✅`, html);
   }
 
-  async sendOrderPlaced(to: string, name: string, orderId: string, service: string, qty: number, charge: number, provider: string) {
+  async sendOrderPlaced(to: string, name: string, orderId: string, service: string, qty: number, charge: number) {
     const fmt = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const html = layout('Order Placed Successfully', `
       <h2>Your order is being processed 🚀</h2>
-      <p>Hi ${name}, your campaign has been placed and is being routed to our provider network.</p>
+      <p>Hi ${name}, your campaign has been placed and is being processed by the Kriyava network.</p>
       <div class="card">
         <div class="card-row"><span class="lbl">Order ID</span><span class="val">…${orderId.slice(-8)}</span></div>
         <div class="card-row"><span class="lbl">Service</span><span class="val">${service.slice(0, 60)}</span></div>
         <div class="card-row"><span class="lbl">Quantity</span><span class="val">${qty.toLocaleString()}</span></div>
         <div class="card-row"><span class="lbl">Charged</span><span class="val val-blue">${fmt(charge)}</span></div>
-        <div class="card-row"><span class="lbl">Provider</span><span class="val">${provider}</span></div>
         <div class="card-row"><span class="lbl">Status</span><span class="val val-green">Processing</span></div>
       </div>
       <a href="${PANEL_URL}/orders" class="btn">Track Your Orders</a>

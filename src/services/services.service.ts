@@ -467,10 +467,59 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
+  // --- Public service-ID masking (hides which provider a service comes from) ---
+  // internal id  "easy:641"  <->  public id  "kva641"
+  private static PROV_CODE: Record<string, string> = { easy: 'a', luv: 'b', fine: 'c' };
+  private static CODE_PROV: Record<string, string> = { a: 'easy', b: 'luv', c: 'fine' };
+
+  publicId(internalId: string): string {
+    const idx = internalId.indexOf(':');
+    if (idx === -1) return internalId;
+    const key = internalId.slice(0, idx);
+    const sid = internalId.slice(idx + 1);
+    const code = ServicesService.PROV_CODE[key];
+    return code ? `kv${code}${sid}` : internalId;
+  }
+
+  private internalId(id: string): string {
+    const m = /^kv([a-c])(.+)$/.exec(id);
+    if (!m) return id;
+    const key = ServicesService.CODE_PROV[m[1]];
+    return key ? `${key}:${m[2]}` : id;
+  }
+
+  // Customer-safe service object — no provider name, cost, margin, or backups.
+  private toPublic(s: MarketService) {
+    return {
+      id: this.publicId(s.id),
+      name: s.name,
+      platform: s.platform,
+      category: s.category,
+      country: s.country,
+      price: s.price,
+      speed: s.speed,
+      refill: s.refill,
+      quality: s.quality,
+      min: s.min,
+      max: s.max,
+      description: s.description,
+    };
+  }
+
+  publicAll() {
+    return this.all().map(s => this.toPublic(s));
+  }
+
+  // Public count + live flag only — no provider names/balances leaked.
+  publicStatus() {
+    return { live: this.providers.length > 0, services: this.all().length };
+  }
+
   find(id: string): MarketService | undefined {
-    const svc = this.byId.get(id);
+    const internal = this.internalId(id);
+    const svc = this.byId.get(internal);
     if (!svc) return undefined;
-    if (this.disabledServices.has(id)) return undefined;
+    if (this.disabledServices.has(internal)) return undefined;
     if (this.disabledProviders.has(this.providerKey(svc.provider || ''))) return undefined;
     return svc;
   }

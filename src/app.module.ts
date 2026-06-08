@@ -11,6 +11,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { AiModule } from './ai/ai.module';
 import { EmailModule } from './email/email.module';
 import { ReferralsModule } from './referrals/referrals.module';
+import { ApiV2Module } from './apiv2/apiv2.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { ReferralsModule } from './referrals/referrals.module';
     PaymentsModule,
     AiModule,
     ReferralsModule,
+    ApiV2Module,
   ],
   controllers: [AppController],
 })

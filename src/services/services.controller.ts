@@ -6,9 +6,10 @@ export class ServicesController {
   constructor(private services: ServicesService) {}
 
   // Public — powers the marketplace. Optional ?platform= & ?q= filters.
+  // Returns customer-safe services only (no provider name, cost, or margin).
   @Get()
   list(@Query('platform') platform?: string, @Query('q') q?: string) {
-    let list = this.services.all();
+    let list = this.services.publicAll();
     if (platform && platform !== 'All') {
       list = list.filter((s) => s.platform === platform);
     }
@@ -18,11 +19,12 @@ export class ServicesController {
         (s.name + ' ' + s.platform + ' ' + s.category).toLowerCase().includes(needle),
       );
     }
-    return { count: list.length, source: this.services.providerStats(), services: list };
+    return { count: list.length, services: list };
   }
 
   @Get('provider-status')
   providerStatus() {
-    return this.services.providerStats();
+    // Public endpoint — only expose live flag + total count, never provider names.
+    return this.services.publicStatus();
   }
 }
