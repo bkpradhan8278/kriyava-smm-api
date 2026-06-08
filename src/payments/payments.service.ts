@@ -69,9 +69,14 @@ export class PaymentsService {
     if (payment.status !== 'captured' && payment.status !== 'authorized') {
       throw new BadRequestException('Payment not completed');
     }
-    const result = await this.wallet.credit(userId, amount, 'Razorpay', razorpayPaymentId);
+    // `razorpayPaymentId` is the idempotency key — a replayed verify hits the unique
+    // constraint and returns duplicate:true instead of crediting (and paying cashback) twice.
+    const result = await this.wallet.credit(userId, amount, 'Razorpay', razorpayPaymentId, razorpayPaymentId);
+    if (result.duplicate) {
+      return { added: 0, balance: result.balance, alreadyProcessed: true };
+    }
 
-    // Fire-and-forget: send email + handle referral cashback
+    // Fire-and-forget: send email + handle referral cashback (only on the first, real credit)
     void this.postPayment(userId, amount, result.balance);
 
     return result;

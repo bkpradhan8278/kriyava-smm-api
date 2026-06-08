@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
@@ -17,6 +19,10 @@ import { LeadsModule } from './leads/leads.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Global rate limit: 300 requests / minute / IP. Generous enough for reseller
+    // API traffic, but caps brute-force on /auth and spam on /v2. Stricter
+    // per-route limits are applied with @Throttle (see auth.controller).
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     PrismaModule,
     EmailModule,
     AuthModule,
@@ -31,5 +37,6 @@ import { LeadsModule } from './leads/leads.module';
     LeadsModule,
   ],
   controllers: [AppController],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

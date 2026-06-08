@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -23,20 +24,34 @@ export class WalletService {
   /**
    * Credit the wallet after a verified payment. Called only by the payments
    * module once a Razorpay signature is verified — no free credit, no cashback.
+   *
+   * Idempotent: pass a unique `ref` (e.g. the Razorpay payment id). A replay of
+   * the same payment hits the unique constraint on Transaction.ref, the whole
+   * transaction rolls back, and we return `duplicate: true` WITHOUT crediting
+   * again. This blocks the "verify the same payment N times = free money" attack.
    */
-  async credit(userId: string, amount: number, method: string, note?: string) {
+  async credit(userId: string, amount: number, method: string, ref?: string, note?: string) {
     if (!amount || amount <= 0) throw new BadRequestException('Invalid amount');
-    await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id: userId },
-        data: { balance: { increment: amount } },
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.user.update({
+          where: { id: userId },
+          data: { balance: { increment: amount } },
+        });
+        await tx.transaction.create({
+          data: { userId, type: 'Deposit', amount, method, ref, note },
+        });
       });
-      await tx.transaction.create({
-        data: { userId, type: 'Deposit', amount, method, note },
-      });
-    });
+    } catch (e) {
+      // P2002 = unique constraint violation on `ref` → this payment was already credited.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const existing = await this.prisma.user.findUnique({ where: { id: userId } });
+        return { added: 0, balance: Number(existing?.balance ?? 0), duplicate: true };
+      }
+      throw e;
+    }
     const u = await this.prisma.user.findUnique({ where: { id: userId } });
-    return { added: amount, balance: Number(u?.balance ?? 0) };
+    return { added: amount, balance: Number(u?.balance ?? 0), duplicate: false };
   }
 
   async transactions(userId: string) {

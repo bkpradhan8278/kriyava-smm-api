@@ -38,6 +38,7 @@ model Transaction {
   amount    Decimal  @db.Decimal(12, 4)
   method    String   @default("Razorpay")
   note      String?
+  ref       String?  @unique // idempotency key (e.g. Razorpay payment id) — blocks double-credit replays
   createdAt DateTime @default(now())
 
   @@index([userId])
