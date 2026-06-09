@@ -28,7 +28,7 @@ export class PaymentsService {
   }
 
   /** Step 1: create a Razorpay order the browser checkout opens. */
-  async createOrder(amount: number) {
+  async createOrder(userId: string, amount: number) {
     if (!this.rzp) throw new ServiceUnavailableException('Payments not configured');
     if (!amount || amount < MIN_TOPUP) {
       throw new BadRequestException(`Minimum top-up is ₹${MIN_TOPUP}`);
@@ -37,7 +37,9 @@ export class PaymentsService {
       amount: Math.round(amount * 100), // paise
       currency: 'INR',
       receipt: 'kriyava_' + Date.now(),
-      notes: { purpose: 'wallet_topup' },
+      // Stamp the user so the webhook backstop can credit the right wallet even if
+      // the browser never calls /verify.
+      notes: { purpose: 'wallet_topup', userId },
     });
     return {
       orderId: order.id,
@@ -80,6 +82,53 @@ export class PaymentsService {
     void this.postPayment(userId, amount, result.balance);
 
     return result;
+  }
+
+  /**
+   * Server-side backstop: Razorpay calls this directly when a payment is captured,
+   * so the wallet still gets credited even if the browser closed before /verify ran.
+   * Shares the same idempotency key (payment id) as /verify, so whichever fires
+   * first wins and the other is a no-op — never a double credit.
+   */
+  async handleWebhook(rawBody: Buffer, signature: string | undefined) {
+    const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+    if (!secret || secret.startsWith('CHANGE_ME')) {
+      // Not configured yet — accept-and-ignore so Razorpay doesn't hammer retries.
+      return { ok: false, reason: 'webhook secret not configured' };
+    }
+    if (!signature) throw new BadRequestException('Missing signature');
+
+    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+    // timing-safe compare
+    const a = Buffer.from(expected);
+    const b = Buffer.from(signature);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      throw new BadRequestException('Invalid webhook signature');
+    }
+
+    const event = JSON.parse(rawBody.toString('utf8')) as {
+      event?: string;
+      payload?: { payment?: { entity?: { id?: string; amount?: number; status?: string; order_id?: string; notes?: Record<string, string> } } };
+    };
+    if (event.event !== 'payment.captured') return { ok: true, ignored: event.event };
+
+    const payment = event.payload?.payment?.entity;
+    if (!payment?.id || !payment.order_id) return { ok: true, ignored: 'no payment entity' };
+
+    // userId comes from the order notes we stamped at create time.
+    let userId = payment.notes?.userId;
+    if (!userId && this.rzp) {
+      const order = await this.rzp.orders.fetch(payment.order_id);
+      userId = (order.notes as Record<string, string> | undefined)?.userId;
+    }
+    if (!userId) return { ok: true, ignored: 'no userId in notes' };
+
+    const amount = Number(payment.amount) / 100;
+    const result = await this.wallet.credit(userId, amount, 'Razorpay (webhook)', payment.id, payment.id);
+    if (result.duplicate) return { ok: true, alreadyProcessed: true };
+
+    void this.postPayment(userId, amount, result.balance);
+    return { ok: true, credited: amount };
   }
 
   private async postPayment(userId: string, amount: number, newBalance: number) {

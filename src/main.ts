@@ -6,7 +6,9 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: true keeps the unparsed request buffer (req.rawBody) available so the
+  // Razorpay webhook can verify the HMAC signature against the exact bytes sent.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   // Behind the DigitalOcean App Platform load balancer: trust the first proxy hop
   // so req.ip reflects the real client (X-Forwarded-For). Without this the rate
