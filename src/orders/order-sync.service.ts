@@ -32,7 +32,7 @@ export class OrderSyncService implements OnModuleInit, OnModuleDestroy {
   private readonly providers: Array<{ key: string; name: string; apiUrl: string; envKey: string }> = [
     { key: 'easy', name: 'EasySMM',  apiUrl: 'https://easysmmpanel.com/api/v2', envKey: 'EASY_SMM_API_KEY' },
     { key: 'luv',  name: 'LuvSMM',   apiUrl: 'https://luvsmm.com/api/v2',       envKey: 'LUV_SMM_API_KEY'  },
-    { key: 'fine', name: 'FineSMM',  apiUrl: 'https://finesmmpanel.com/api/v2', envKey: 'FINE_SMM_API_KEY'  },
+    // FineSMM removed — no longer used.
   ];
 
   constructor(private prisma: PrismaService, private config: ConfigService) {}

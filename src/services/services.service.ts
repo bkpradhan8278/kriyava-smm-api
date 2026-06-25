@@ -125,12 +125,7 @@ export class ServicesService implements OnModuleInit, OnModuleDestroy {
         apiUrl: 'https://luvsmm.com/api/v2',
         apiKey: this.config.get<string>('LUV_SMM_API_KEY'),
       },
-      {
-        key: 'fine',
-        name: 'FineSMM',
-        apiUrl: 'https://finesmmpanel.com/api/v2',
-        apiKey: this.config.get<string>('FINE_SMM_API_KEY'),
-      },
+      // FineSMM removed — no longer used.
     ].filter((p) => Boolean(p.apiKey));
   }
 
