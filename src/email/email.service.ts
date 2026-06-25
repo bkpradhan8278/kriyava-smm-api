@@ -30,7 +30,10 @@ function layout(title: string, body: string) {
   .badge{display:inline-block;background:rgba(37,99,235,.1);color:${ACCENT};font-size:11px;font-weight:700;padding:3px 10px;border-radius:6px;letter-spacing:.04em;text-transform:uppercase}
 </style></head>
 <body><div class="wrap">
-  <div class="hd"><h1>${BRAND}</h1><p>${title}</p></div>
+  <div class="hd">
+    <img src="${PANEL_URL}/assets/logo-128.png" alt="${BRAND}" width="52" height="52" style="display:inline-block;width:52px;height:52px;border-radius:14px;background:#fff;padding:7px;box-sizing:border-box;margin-bottom:12px">
+    <h1>${BRAND}</h1><p>${title}</p>
+  </div>
   <div class="bd">${body}</div>
   <div class="ft">© ${new Date().getFullYear()} ${BRAND} · <a href="${PANEL_URL}">${PANEL_URL}</a><br>You're receiving this because you have an account at Kriyava SMM.</div>
 </div></body></html>`;
